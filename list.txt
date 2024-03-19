@@ -1,0 +1,99 @@
+<#
+The Teams presence, will go from 'Available' to 'Away' after 5 minutes of inactivity.
+There are several Teams processes, bout only one of them will have a non-zero 'MainWindowHandle' - That is the actual window. 
+
+This script toggles the Teams window to the top (making it the active window), every 4.5 minutes (270 seconds). 
+Thus when Teams is the active window, the Teams presence is set to 'Available', before it can show an 'Away' presence.
+Fire it up if you need to be away discreetly...
+If you want it to allow you to be 'Away' for lunch - Uncomment those variable, and set '$LunchStart' and '$LunchEnd' accordingly.
+Example (lunch from noon to 1pm):
+$LunchStart = [DateTime]"12:00"
+$LunchEnd = [DateTime]"13:00"
+
+And if you want to kill this script at quitting time - Uncomment the '$QuittingTime' variable, and set it accordingly.
+Example (Quitting time is 5pm):
+$QuittingTime = [DateTime]"17:00"
+#>
+
+# Leave these NULL values alone #
+$LunchStart = $null; $LunchEnd = $null; $QuittingTime = $null
+# Leave these NULL values alone #
+
+# Uncomment these two items and set them accordingly if you want to use the lunchbreak feature.
+$LunchStart = [DateTime]"17:00"
+$LunchEnd = [DateTime]"18:00"
+# Uncomment these two items and set them accordingly if you want to the lunchbreak feature.
+
+# Uncomment this item and set it accordingly if you want to use the QuittingTime feature.
+$QuittingTime = [DateTime]"17:00"
+# Uncomment this item and set it accordingly if you want to use the QuittingTime feature.
+
+$RunIt = 0
+
+If ( (Get-Date) -lt $LunchStart -or (Get-Date) -gt $LunchEnd ) { $RunIt = 1 }
+If ( $LunchStart -eq $null -and (Get-Date) -lt $QuittingTime ) { $RunIt = 1 }
+If ( (Get-Date) -lt $QuittingTime ) { $RunIt = 1 }
+If ( (Get-Date) -ge $QuittingTime ) { $RunIt = 0 }
+
+
+
+# Function 'Set-WindowStyle' was found in THIS comment: https://www.reddit.com/r/PowerShell/comments/bng1ec/comment/en6a3pi
+
+Function Set-WindowStyle 
+{
+    param
+    (
+        [Parameter()]
+        [ValidateSet('FORCEMINIMIZE', 'HIDE', 'MAXIMIZE', 'MINIMIZE', 'RESTORE', 
+            'SHOW', 'SHOWDEFAULT', 'SHOWMAXIMIZED', 'SHOWMINIMIZED', 
+            'SHOWMINNOACTIVE', 'SHOWNA', 'SHOWNOACTIVATE', 'SHOWNORMAL')]
+        $Style = 'SHOW',
+        [Parameter()]
+        $MainWindowHandle = (Get-Process -Id $pid).MainWindowHandle
+    )
+# $MainWindowHandle = (Get-Process -Id $pid).MainWindowHandle
+# Get-Process | ? { $_.Product -match "Teams" -and $_.MainWindowHandle -ne 0 }
+    $WindowStates = @{
+        FORCEMINIMIZE = 11; HIDE = 0
+        MAXIMIZE = 3; MINIMIZE = 6
+        RESTORE = 9; SHOW = 5
+        SHOWDEFAULT = 10; SHOWMAXIMIZED = 3
+        SHOWMINIMIZED = 2; SHOWMINNOACTIVE = 7
+        SHOWNA = 8; SHOWNOACTIVATE = 4
+        SHOWNORMAL = 1
+    }
+    Write-Verbose ("Set Window Style {1} on handle {0}" -f $MainWindowHandle, $($WindowStates[$style]))
+
+    $Win32ShowWindowAsync = Add-Type –memberDefinition @” 
+    [DllImport("user32.dll")] 
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+“@ -name “Win32ShowWindowAsync” -namespace Win32Functions –passThru
+
+    $Win32ShowWindowAsync::ShowWindowAsync($MainWindowHandle, $WindowStates[$Style]) | Out-Null
+} # END Function Set-WindowStyle 
+
+# Setting the baseline...
+Get-Process | ? { $_.Product -match "Teams" -and $_.MainWindowHandle -ne 0 } | % { Set-WindowStyle MINIMIZE $PSItem.MainWindowHandle }
+Sleep 2
+Get-Process | ? { $_.Product -match "Teams" -and $_.MainWindowHandle -ne 0 } | % { Set-WindowStyle RESTORE $PSItem.MainWindowHandle }
+
+$Timer = 270
+
+Do {
+If ( $RunIt -ge 1 ) {
+Get-Process | ? { $_.Product -match "Teams" -and $_.MainWindowHandle -ne 0 } | % { Set-WindowStyle MINIMIZE $PSItem.MainWindowHandle }
+Sleep 2
+Get-Process | ? { $_.Product -match "Teams" -and $_.MainWindowHandle -ne 0 } | % { Set-WindowStyle RESTORE $PSItem.MainWindowHandle }
+}
+If ( (Get-Date) -gt $QuittingTime -and $QuittingTime -ne $null) { Write-Host "STOP!!!" -F 14; Break }
+
+Sleep $Timer
+} While ($Blurb -eq $null)
+
+
+<#
+NOTE: Teams status is logged here:
+
+$TeamsStatus = Get-Content -Path $env:APPDATA"\Microsoft\Teams\logs.txt" -Tail 1000 | Select-String -Pattern `
+  'Setting the taskbar overlay icon -',`
+  'StatusIndicatorStateService: Added' | Select-Object -Last 1
